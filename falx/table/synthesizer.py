@@ -9,7 +9,7 @@ from falx.table.language import (HOLE, Node, Table, Select, Unite, Filter, Separ
 	Gather, GroupSummary, CumSum, Mutate, MutateCustom)
 from falx.table import enum_strategies
 from falx.table import abstract_eval
-from falx.utils.synth_utils import remove_duplicate_columns, check_table_inclusion, align_table_schema
+from falx.utils.synth_utils import remove_duplicate_columns, check_table_inclusion, t_or_l_inclusion, align_table_schema
 
 abstract_combinators = {
 	"select": lambda q: Select(q, cols=HOLE),
