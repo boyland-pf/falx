@@ -65,7 +65,7 @@ def check_table_inclusion(table1, table2, wild_card=None):
     return check_ok
 
 
-def t_or_l_inclusion(t1,t2,wildcard="??"):
+def t_or_l_inclusion(t1,t2,wild_card="??"):
     for x1,x2 in zip(list(t1),list(t2)):
         if x1 != None and x1 == wild_card:
             continue
@@ -166,7 +166,7 @@ def align_table_schema(table1, table2, check_equivalence=False, boolean_result=F
         B.add_edges_from(graph_edges)
         top_nodes = {n for n, d in B.nodes(data=True) if d["bipartite"] == 0}
         best_matching = nx.bipartite.maximum_matching(B,top_nodes=top_nodes)
-        elif len(best_matching) / 2 == len(frozen_table1):
+        if len(best_matching) / 2 == len(frozen_table1):
             if find_all_alignments:
                 all_alignments.append(inst)
             else:

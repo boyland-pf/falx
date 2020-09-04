@@ -23,6 +23,10 @@ np.random.seed(2019)
 logger = get_logger("interface")
 logger.setLevel('INFO')
 
+with open("/Users/peter/Documents/UCSB/falx/falx/peterlogs/interfacelog.txt",'w') as f:
+    f.write("starting up interface...\n")
+
+
 class FalxInterface(object):
 
     # the default confifguration for the synthesizer
@@ -75,7 +79,7 @@ class FalxInterface(object):
         return config
 
     @staticmethod
-    def synthesize(inputs, raw_trace, extra_consts=[], group_results=False, config={}):
+    def synthesize(inputs, raw_trace, extra_consts=[], group_results=False, config={}, throw_away_rows_or_cols = False):
         """synthesize table prog and vis prog from input and output traces
         Inputs:
             input tables: a list of input tables that the synthesizer will take into consideration
@@ -93,6 +97,9 @@ class FalxInterface(object):
                       "grammar_base_file": "dsl/tidyverse.tyrell.base",
                       "block_sketches": [], "block_program_symbols": [], "vis_backend": "vegalite" }
         """
+
+        with open("/Users/peter/Documents/UCSB/falx/falx/peterlogs/interfacelog.txt",'a') as f:
+            f.write("starting to synthesize...\n")
 
         # update synthesizer config
         config = FalxInterface.update_config(config)
@@ -116,6 +123,7 @@ class FalxInterface(object):
         candidates = []
         for sym_data, chart in abstract_designs:
 
+
             # split case based on single layered chart or multi layered chart
             if not isinstance(sym_data, (list,)):
                 # single-layer chart
@@ -125,8 +133,13 @@ class FalxInterface(object):
                 print("==> table synthesis input:")
                 print(sym_data.instantiate())
 
+                instantiated = sym_data.instantiate()
+
+                with open("/Users/peter/Documents/UCSB/falx/falx/peterlogs/interfacelog.txt",'a') as f:
+                    f.write(str(instantiated) + "\n")
+
                 candidate_progs = synthesizer.enumerative_synthesis(
-                                    inputs, sym_data.instantiate(), 
+                                    inputs, instantiated, 
                                     max_prog_size=config["max_prog_size"],
                                     time_limit_sec=config["time_limit_sec"],
                                     solution_limit=config["solution_limit"])

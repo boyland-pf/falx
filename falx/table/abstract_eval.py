@@ -81,9 +81,9 @@ def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 				#out_df[[x for x in out_df.columns if x != c]]
 				if not out_df.empty:
 					def incorporate_wild_card(df):
-						df[cols[i]] = np.where(df == wild_card, df + '_' + df,df)
+						df[c] = np.where(df[c] == wild_card, df[c] + '_' + df[c],df[c])
 						return df
-					t = Separate(Table(0), i).eval([incorporate_wild_card(df)])
+					t = Separate(Table(0), i).eval([incorporate_wild_card(out_df)])
 					candidates += [t]
 				else:
 					candidates += [out_df]
