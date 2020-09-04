@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 
 from falx.table.language import *
 from falx.utils.synth_utils import remove_duplicate_columns, check_table_inclusion
@@ -44,7 +45,7 @@ def backward_eval(node, out_df, is_outer_most=True):
 	return all_premesis_chains
 
 
-def backward_eval_one_step(op, out_df, is_outer_most=False):
+def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 	"""backwardly evaluate an operator to infer property of the input
 		Given the operator and the output dataframe, 
 	Args:
@@ -76,10 +77,13 @@ def backward_eval_one_step(op, out_df, is_outer_most=False):
 				continue
 			col_vals = out_df[c].to_list()
 
-			if all(["_" in v for v in col_vals]):
+			if all(["_" in v or wild_card == v for v in col_vals]):
 				#out_df[[x for x in out_df.columns if x != c]]
 				if not out_df.empty:
-					t = Separate(Table(0), i).eval([out_df])
+					def incorporate_wild_card(df):
+						df[cols[i]] = np.where(df == wild_card, df + '_' + df,df)
+						return df
+					t = Separate(Table(0), i).eval([incorporate_wild_card(df)])
 					candidates += [t]
 				else:
 					candidates += [out_df]
@@ -89,6 +93,11 @@ def backward_eval_one_step(op, out_df, is_outer_most=False):
 		return [out_df]
 
 	if op == "separate":
+		#TODO: as with the one-separated case, loses some information 
+		def convert_abstract(df,wild_card = "??"):
+			df = pd.DataFrame(np.where(wild_card in df, wild_card, df), index=df.index, columns = df.columns)
+			return df
+
 		# enumerate candidate key-value columns
 		candidates = []
 
@@ -113,10 +122,10 @@ def backward_eval_one_step(op, out_df, is_outer_most=False):
 
 			for sep in ["-", "_", " "]:
 				t = Unite(Table(0), sep_col_indexes[0], sep_col_indexes[1], sep).eval([out_df])
-				candidates.append(t)
+				candidates.append(convert_abstract(t))
 			for sep in ["-", "_", " "]:
 				t = Unite(Table(0), sep_col_indexes[1], sep_col_indexes[0], sep).eval([out_df])
-				candidates.append(t)
+				candidates.append(convert_abstract(t))
 
 		return candidates
 
