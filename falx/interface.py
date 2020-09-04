@@ -79,7 +79,7 @@ class FalxInterface(object):
         return config
 
     @staticmethod
-    def synthesize(inputs, raw_trace, extra_consts=[], group_results=False, config={}, throw_away_rows_or_cols = False):
+    def synthesize(inputs, raw_trace, extra_consts=[], group_results=False, config={}, throw_away_rows_or_cols = True):
         """synthesize table prog and vis prog from input and output traces
         Inputs:
             input tables: a list of input tables that the synthesizer will take into consideration
@@ -120,6 +120,25 @@ class FalxInterface(object):
         logger.info("# Synthesizer configuration")
         logger.info(json.dumps(config, indent=2))
 
+        def remove_demonstrations(inst):
+            r_count = 0
+            r_set = {}
+            c_count = 0
+            c_set = {}
+            for r,i in zip(inst,range(len(inst))):
+                for k,v in r.items():
+                    if v == "??":
+                        c_set[k] = True
+                        r_set[i] = True
+            for k in c_set:
+                c_count += 1
+            for r in r_set:
+                r_count += 1
+            if r_count < len(inst):
+                return [r for r,i in zip(inst,range(len(inst))) if i not in r_set]
+            else:
+                return [{k:v for (k,v) in r.items() if k not in c_set} for r in inst]
+
         candidates = []
         for sym_data, chart in abstract_designs:
 
@@ -138,6 +157,9 @@ class FalxInterface(object):
                 with open("/Users/peter/Documents/UCSB/falx/falx/peterlogs/interfacelog.txt",'a') as f:
                     f.write(str(instantiated) + "\n")
 
+                if throw_away_rows_or_cols:
+                    instantiated = remove_demonstrations(instantiated)
+
                 candidate_progs = synthesizer.enumerative_synthesis(
                                     inputs, instantiated, 
                                     max_prog_size=config["max_prog_size"],
@@ -148,7 +170,8 @@ class FalxInterface(object):
                     output = p.eval(inputs).to_dict(orient="records")
 
                     field_mappings = synth_utils.align_table_schema(sym_data.values, output, find_all_alignments=True)
-                    assert(len(field_mappings) > 0)
+                    if not throw_away_rows_or_cols:
+                        assert(len(field_mappings) > 0)
 
                     for field_mapping in field_mappings:
                         if config["vis_backend"] == "vegalite":
