@@ -24,6 +24,8 @@ abstract_combinators = {
 	"mutate_custom": lambda q: MutateCustom(q, col=HOLE, op=HOLE, const=HOLE), 
 }
 
+wild_card = "??"
+
 def update_tree_value(node, path, new_val):
 	"""from a given ast node, locate the refence to the arg,
 	   and update the value"""
@@ -60,7 +62,7 @@ class Synthesizer(object):
 		# (this decides if we should use ops that generates new vals)
 		
 		inp_val_set = set([v for t in inputs for r in t for k, v in r.items()] + [k for t in inputs for k in t[0]])
-		out_val_set = set([v for r in output for k, v in r.items()])
+		out_val_set = set([v for r in output for k, v in r.items() if v != wild_card])
 		new_vals = out_val_set - inp_val_set
 		
 		#if any([len(t[0]) < 4 for t in inputs]):
