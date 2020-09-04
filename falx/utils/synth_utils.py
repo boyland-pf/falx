@@ -3,6 +3,7 @@ import itertools
 import numpy as np
 
 import pandas as pd
+import networkx as nx
 
 def remove_duplicate_columns(df):
     """Given a pandas table deuplicate column duplicates"""
@@ -54,6 +55,8 @@ def check_table_inclusion(table1, table2, wild_card=None):
             if contained:
                 mapping[k1].append(k2)
 
+    #print(mapping)
+
     # distill plausible mappings from the table
     # not all choices generated from the approach above generalize, we need to check consistency
     t1_schema = list(mapping.keys())
@@ -62,8 +65,15 @@ def check_table_inclusion(table1, table2, wild_card=None):
     return check_ok
 
 
-def align_table_schema(table1, table2, check_equivalence=False, boolean_result=False):
-    """align table schema, assume that table1 is contained by table2"""
+def align_table_schema(table1, table2, check_equivalence=False, boolean_result=False, find_all_alignments=False, wild_card="??"):
+    """align table schema, assume that table1 is contained by table2
+    Args:
+        find_all_alignments: whether to find all alignments or not
+    """
+
+    with open("petertestinterface.txt", 'a') as f:
+        f.write("table1: " + str(table1) + "\n")
+
     if len(table1) > len(table2):
         # cannot find any mapping
         return None
@@ -73,16 +83,22 @@ def align_table_schema(table1, table2, check_equivalence=False, boolean_result=F
 
     mapping = {}
     vals2_dicts = {}
+    #each key in the larger table is associated with a multi-set of its values
     for k2 in table2[0].keys():
         vals2_dicts[k2] = construct_value_dict([r[k2] for r in table2 if k2 in r])
 
     for k1 in table1[0].keys():
         mapping[k1] = []
+        #same with the smaller table
         vals1_dict = construct_value_dict([r[k1] for r in table1 if k1 in r])
         for k2 in table2[0].keys():
             vals2_dict = vals2_dicts[k2]
             contained = True
             for x in vals1_dict:
+                if wild_card != None and x == wild_card:
+                    # the same wildcard code from above works here as well
+                    continue
+
                 if (x not in vals2_dict) or (vals2_dict[x] < vals1_dict[x]):
                     contained = False
                 if check_equivalence and (x not in vals2_dict or vals2_dict[x] != vals1_dict[x]):
@@ -109,16 +125,17 @@ def align_table_schema(table1, table2, check_equivalence=False, boolean_result=F
 
     if boolean_result: return len(all_choices) > 0
 
-    # directly return if there is only one choice, !!!should still check it to ensure correctness
+        # directly return if there is only one choice, !!!should still check it to ensure correctness
     #if len(all_choices) == 1:
     #    return {key:mapping[key][0] for key in mapping}
 
+    all_alignments = []
     for mapping_id_choices in all_choices:
         # the following is an instantiation of the the mapping
         inst = { t1_schema[i]:mapping[t1_schema[i]][mapping_id_choices[i]] for i in range(len(t1_schema))}
 
         def value_handling_func(val):
-            if isinstance(val, (int, str,)):
+            if isinstance(val, (int,)):
                 return val
             try:
                 val = float(val)
@@ -131,8 +148,41 @@ def align_table_schema(table1, table2, check_equivalence=False, boolean_result=F
         frozen_table1 = [tuple([value_handling_func(r[key]) for key in t1_schema if key in r]) for r in table1]
         frozen_table2 = [tuple([value_handling_func(r[inst[key]]) for key in t1_schema if inst[key] in r]) for r in table2]
 
-        if all([frozen_table1.count(t) <= frozen_table2.count(t) for t in frozen_table1]):
-            return inst
+        with open("petertestinterface.txt", 'a') as f:
+            f.write("frozen_table2: " + str(frozen_table2) + "\n")
+
+        def tuple_inclusion(t1,t2):
+            for x1,x2 in zip(list(t1),list(t2)):
+                if x1 != None and x1 == wild_card:
+                    continue
+                if x1 != x2:
+                    return False
+            return True
+        
+        B = nx.Graph()
+        B.add_nodes_from(frozen_table1, bipartite=0)
+        B.add_nodes_from([str(x) for x in frozen_table2], bipartite=1)
+        graph_edges = [(t1,str(t2)) for (t1,t2) in itertools.product(frozen_table1,frozen_table2) if tuple_inclusion(t1,t2)]
+        B.add_edges_from(graph_edges)
+        top_nodes = {n for n, d in B.nodes(data=True) if d["bipartite"] == 0}
+        best_matching = nx.bipartite.maximum_matching(B,top_nodes=top_nodes)
+        if len(best_matching) / 2 > len(frozen_table1):
+            f.write("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+            exit(0)
+        elif len(best_matching) / 2 == len(frozen_table1):
+            if find_all_alignments:
+                all_alignments.append(inst)
+            else:
+                return inst
+
+        # if all([frozen_table1.count(t) <= frozen_table2.count(t) for t in frozen_table1]):
+        #     if find_all_alignments:
+        #         all_alignments.append(inst)
+        #     else:
+        #         return inst
+
+    if find_all_alignments:
+        return all_alignments
 
     return None
 
