@@ -26,6 +26,9 @@ abstract_combinators = {
 
 wild_card = "??"
 
+global attempt_count
+attempt_count = 0
+
 def update_tree_value(node, path, new_val):
 	"""from a given ast node, locate the refence to the arg,
 	   and update the value"""
@@ -284,7 +287,7 @@ class Synthesizer(object):
 		print(f"number of programs: {len(candidates)}")
 		return candidates
 
-	def enumerative_synthesis(self, inputs, output, max_prog_size, time_limit_sec=None, solution_limit=None):
+	def enumerative_synthesis(self, inputs, output, max_prog_size, time_limit_sec=None, solution_limit=None, true_output=None):
 		"""Given inputs and output, enumerate all programs with premise check until 
 			find a solution p such that output ⊆ subseteq p(inputs) """
 
@@ -311,6 +314,14 @@ class Synthesizer(object):
 					alignment_result = align_table_schema(output, t.to_dict(orient="records"))
 					if alignment_result != None:
 						candidates.append(p)
+						if true_output != None:
+							print("hello")
+							correct_table_trans = align_table_schema(true_output,t.to_dict(orient="records"),check_equivalence=True, boolean_result=True)
+							global attempt_count
+							if correct_table_trans:
+								print("# candidates before getting the correct solution: " + str(attempt_count))
+							else:
+								attempt_count += 1
 
 					if solution_limit is not None and len(candidates) > solution_limit:
 						return candidates
