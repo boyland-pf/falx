@@ -35,7 +35,7 @@ def test_benchmarks(data_dir, data_id, num_samples, backend, prune):
     """load the dataset into panda dataframes """
     test_targets = None
     if data_id is not None:
-        test_targets = [str(data_id) + '.json']
+        test_targets = [str(data_id)] # + '.json']
     else:
         test_targets = [fname for fname in os.listdir(data_dir) if fname.endswith(".json")]
 
@@ -59,7 +59,7 @@ def test_benchmarks(data_dir, data_id, num_samples, backend, prune):
         trace = vis.eval()
         #pprint(trace)
 
-        result = FalxInterface.synthesize([input_data], trace, extra_consts=extra_consts, num_samples = num_samples)
+        result = FalxInterface.synthesize([input_data], trace, extra_consts=extra_consts, num_samples = num_samples, config = {"solution_limit": 100, "time_limit_sec": 60*3})
 
         print("## synthesize result for task {}".format(fname))
         for p, vis in result:

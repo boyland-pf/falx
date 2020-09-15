@@ -81,6 +81,7 @@ def align_table_schema(table1, table2, check_equivalence=False, boolean_result=F
 
     with open("petertestinterface.txt", 'a') as f:
         f.write("table1: " + str(table1) + "\n")
+        f.write("table2: " + str(table2) + "\n")
 
     if len(table1) > len(table2):
         # cannot find any mapping

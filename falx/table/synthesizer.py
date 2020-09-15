@@ -291,6 +291,8 @@ class Synthesizer(object):
 		"""Given inputs and output, enumerate all programs with premise check until 
 			find a solution p such that output ⊆ subseteq p(inputs) """
 
+		print("solution limit is " + str(solution_limit))
+
 		start_time = time.time()
 
 		all_sketches = self.enum_sketches(inputs, output, size=max_prog_size)
@@ -315,21 +317,27 @@ class Synthesizer(object):
 					if alignment_result != None:
 						candidates.append(p)
 						if true_output != None:
-							print("hello")
-							correct_table_trans = align_table_schema(true_output,t.to_dict(orient="records"),check_equivalence=True, boolean_result=True)
 							global attempt_count
+							print("hello: attempt count is " + str(attempt_count) + "\n")
+
+							correct_table_trans = align_table_schema(true_output,t.to_dict(orient="records"), boolean_result=True)
 							if correct_table_trans:
 								print("# candidates before getting the correct solution: " + str(attempt_count))
+								print("\n about to return from synthesis ....\n")
+								return candidates
 							else:
 								attempt_count += 1
+							print("hello: now attempt count is " + str(attempt_count) + "\n")
 
 					if solution_limit is not None and len(candidates) > solution_limit:
+						print("\n\n found a bunch of candidates ....\n\n")
 						return candidates
 				
 				# early return if the termination condition is met
 				# TODO: time_limit may be exceeded if the synthesizer is stuck on iteratively instantiation
 				if time_limit_sec is not None and time.time() - start_time > time_limit_sec:
+					print("\n\n ran out of time ....\n\n")
 					return candidates
 
-
+		print("\n\n no sketches left to try ....\n\n")
 		return candidates
