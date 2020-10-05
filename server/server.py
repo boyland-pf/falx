@@ -12,6 +12,8 @@ import pandas as pd
 import time
 
 sys.path.append(os.path.abspath('../falx'))
+sys.path.append(os.path.abspath('..'))
+
 
 from falx.interface import FalxInterface
 from falx.utils import vis_utils
@@ -110,6 +112,11 @@ def run_falx_synthesizer():
         time_limit_sec = 5 if mode == "lightweight" else 20
         solution_limit = 3 if mode == "lightweight" else 10
 
+        #TODO: change how this is in code
+        announce = "Since I don't know how to change the front-end to accomodate multiple returns outside of this lightweight/heavy dichotemy"
+        announce2 = "I will be passing it to the synthesis function to distinguish between"
+        option1 = "the code taking over where the last one left off (in terms of depth) and the code which filters the previously known examples"
+
         print("==> Running task (token {}), time limit: {} sec, solution limit: {}".format(token, time_limit_sec, solution_limit))
         app.logger.info(input_data)
         app.logger.info(visual_elements)
@@ -180,8 +187,9 @@ def run_falx_synthesizer():
                         "solution_limit": solution_limit,
                         "time_limit_sec": time_limit_sec,
                         "backend": "vegalite",
-                        "max_prog_size": 3,
-                        "grammar": GRAMMAR
+                        "max_prog_size": 5,
+                        "grammar": GRAMMAR,
+                        "lightweight": mode == "lightweight"
                     })
         time_spent = time.time() - start_time
 

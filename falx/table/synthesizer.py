@@ -9,7 +9,7 @@ from falx.table.language import (HOLE, Node, Table, Select, Unite, Filter, Separ
 	Gather, GroupSummary, CumSum, Mutate, MutateCustom)
 from falx.table import enum_strategies
 from falx.table import abstract_eval
-from falx.utils.synth_utils import remove_duplicate_columns, check_table_inclusion, t_or_l_inclusion, align_table_schema
+from falx.utils.synth_utils import remove_duplicate_columns, check_table_inclusion, t_or_l_inclusion, align_table_schema, prlog
 
 abstract_combinators = {
 	"select": lambda q: Select(q, cols=HOLE),
@@ -29,6 +29,9 @@ wild_card = "??"
 global attempt_count
 attempt_count = 0
 
+global candidate_programs_cache
+candidate_programs_cache = None
+
 def update_tree_value(node, path, new_val):
 	"""from a given ast node, locate the refence to the arg,
 	   and update the value"""
@@ -40,6 +43,9 @@ def get_node(node, path):
 	for k in path:
 		node = node["children"][k]
 	return node
+
+with open("/Users/peter/Documents/UCSB/falx/falx/output/peterlogs/interfacelog.txt", 'w') as f:
+	f.write("synthesizer loaded\n")
 
 class Synthesizer(object):
 
@@ -93,8 +99,6 @@ class Synthesizer(object):
 
 		for level in range(0, size + 1):
 			candidates[level] = [q for q in candidates[level] if not enum_strategies.disable_sketch(q, new_vals, has_sep)]
-
-
 		return candidates
 
 	def pick_vars(self, ast, inputs):
@@ -263,21 +267,49 @@ class Synthesizer(object):
 		print("----")
 		print(f"number of programs: {len(concrete_programs)}")
 
-	def enumerative_search(self, inputs, output, max_prog_size):
+	#todo: these optional args do almost nothing
+	def enumerative_search(self, inputs, output, max_prog_size, time_limit_sec=None, solution_limit=None, true_output=None):
 		"""Given inputs and output, enumerate all programs in the search space until 
 			find a solution p such that output ⊆ subseteq p(inputs)  """
+		if true_output != None:
+			prlog("True output is: " + str(true_output))
+
 		all_sketches = self.enum_sketches(inputs, output, size=max_prog_size)
 		candidates = []
+		prlog("true output:\n" + str(output) + "\n")
 		for level, sketches in all_sketches.items():
 			for s in sketches:
 				concrete_programs = self.iteratively_instantiate_and_print(s, inputs, 1)
+				prlog("\nSketch\n:" + str(s.to_dict())+"\n")
+				prlog("CONCRETE PROGRAMS:\n"+str(concrete_programs) + "\n")
+
 				for p in concrete_programs:
 					try:
 						t = p.eval(inputs)
+						temp = False
+						tempTrue = False
 						if align_table_schema(output, t.to_dict(orient="records")) != None:
+							temp = True
+							if true_output != None:
+								global attempt_count
+								if align_table_schema(true_output,t.to_dict(orient="records"), boolean_result=True): #and align_table_schema(t.to_dict(orient="records"), true_output, boolean_result=True):
+									print("# candidates before getting a good enough solution: " + str(attempt_count))
+									tempTrue = True
+									#return candidates
+								else:
+									attempt_count += 1
+
 							print(p.stmt_string())
 							print(t)
 							candidates.append(p)
+						prlog("sketch: " + str(s.to_dict()) + "\n")
+						prlog("program: " + str(p.to_dict()) + "\n")
+						if temp:
+							prlog("MATCH!\n")
+						if tempTrue:
+							prlog("CORRECT!\n")
+						prlog("candidate output:\n" + str(t) + "\n")
+						
 					except Exception as e:
 						print(f"[error] {sys.exc_info()[0]} {e}")
 						tb = sys.exc_info()[2]
@@ -287,9 +319,29 @@ class Synthesizer(object):
 		print(f"number of programs: {len(candidates)}")
 		return candidates
 
-	def enumerative_synthesis(self, inputs, output, max_prog_size, time_limit_sec=None, solution_limit=None, true_output=None):
+	def enumerative_synthesis(self, inputs, output, max_prog_size, time_limit_sec=None, solution_limit=None, true_output=None, lightweight=False):
 		"""Given inputs and output, enumerate all programs with premise check until 
 			find a solution p such that output ⊆ subseteq p(inputs) """
+
+		prlog("the solution limit is: " + str(solution_limit))
+
+		def encache(cands,k):
+			global candidate_programs_cache
+
+			if candidate_programs_cache is not None:
+				prlog("OVERWRITING CACHE")
+			candidate_programs_cache = (output, cands, k)
+			return cands
+
+		global candidate_programs_cache
+		min_prog_size = 0
+		if candidate_programs_cache is not None:
+			(prevOutput, prevCands,k) = candidate_programs_cache
+			if align_table_schema(prevOutput,output, boolean_result=True):
+				if lightweight:
+					return [cand for cand in prevCands if align_table_schema(output,cand.eval(inputs).to_dict(orient="records"),boolean_result=True)]
+				else:
+					min_prog_size = k
 
 		print("solution limit is " + str(solution_limit))
 
@@ -298,6 +350,8 @@ class Synthesizer(object):
 		all_sketches = self.enum_sketches(inputs, output, size=max_prog_size)
 		candidates = []
 		for level, sketches in all_sketches.items():
+			if min_prog_size > level:
+				continue
 			for s in sketches:
 				print(s.stmt_string())
 				ast = s.to_dict()
@@ -318,26 +372,33 @@ class Synthesizer(object):
 						candidates.append(p)
 						if true_output != None:
 							global attempt_count
-							print("hello: attempt count is " + str(attempt_count) + "\n")
+							prlog("hello: attempt count is " + str(attempt_count) + "\n",pr=True)
 
 							correct_table_trans = align_table_schema(true_output,t.to_dict(orient="records"), boolean_result=True)
-							if correct_table_trans:
-								print("# candidates before getting the correct solution: " + str(attempt_count))
-								print("\n about to return from synthesis ....\n")
-								return candidates
+							other_dir = align_table_schema(t.to_dict(orient="records"), true_output, boolean_result=True)
+							# if correct_table_trans and not other_dir:
+							# 	print("TRUE OUTPUT (length " + str(len(true_output)) + "): " + str(true_output))
+							# 	print("P's OUTPUT (length " + str(len(t.to_dict(orient="records"))) + "): " + str(t.to_dict(orient="records")))
+							if correct_table_trans and other_dir:
+								prlog("# candidates before getting the correct solution: " + str(attempt_count), pr=True)
+								prlog("\n about to return from synthesis ....\n",pr=True)
+								return encache(candidates,level)
 							else:
 								attempt_count += 1
-							print("hello: now attempt count is " + str(attempt_count) + "\n")
+							prlog("hello: now attempt count is " + str(attempt_count) + "\n",pr=True)
 
-					if solution_limit is not None and len(candidates) > solution_limit:
-						print("\n\n found a bunch of candidates ....\n\n")
-						return candidates
+					if solution_limit is not None and len(candidates) >= solution_limit:
+						prlog("\n\n found " + str(len(candidates)) + " candidates ....\n\n")
+						return encache(candidates,level)
 				
 				# early return if the termination condition is met
 				# TODO: time_limit may be exceeded if the synthesizer is stuck on iteratively instantiation
 				if time_limit_sec is not None and time.time() - start_time > time_limit_sec:
-					print("\n\n ran out of time ....\n\n")
-					return candidates
+					prlog("\n\n ran out of time ....\n\n")
+					return encache(candidates,level)
+			if len(candidates) > 0:
+				prlog("finished out level " + str(level) + " with candidates ...")
+				return encache(candidates,level+1)
 
-		print("\n\n no sketches left to try ....\n\n")
-		return candidates
+		prlog("\n\n no sketches left to try ....\n\n")
+		return encache(candidates,max_prog_size+1)

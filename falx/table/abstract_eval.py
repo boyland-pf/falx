@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 from falx.table.language import *
-from falx.utils.synth_utils import remove_duplicate_columns, check_table_inclusion
+from falx.utils.synth_utils import remove_duplicate_columns, check_table_inclusion, prlog
 
 def backward_eval(node, out_df, is_outer_most=True):
 	"""Given an ast node, and the output dataframe, 
@@ -26,6 +26,7 @@ def backward_eval(node, out_df, is_outer_most=True):
 	all_premesis_chains = []
 	if node["op"] != "table_ref":
 		# evaluate all possible premise the direct child node
+		prlog("Going backward from: \n" + str(out_df.to_dict(orient="records")) + "\n\n",pr=True)
 		inp_df_list = backward_eval_one_step(node["op"], out_df, is_outer_most)
 		for inp_df in inp_df_list:
 			# recursively calculate all premises from children
@@ -59,8 +60,27 @@ def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 	cols = out_df.columns
 	schema = extract_table_schema(out_df)
 
+	result = None
+	prlog("the operator is " + op + "\n",pr=True)
+
+	def convert_abstract(df,wild_card="??"):
+		def qin(x):
+			if wild_card in str(x):
+				return wild_card
+			else:
+				return x
+		for clmn in df.columns:
+			df[clmn]  = df[clmn].apply(qin)
+		return df
+
+	def convert_abstract2(df):
+		for clmn in df.columns:
+			df[clmn] = np.where(df[clmn] == "??_??", "??", df[clmn])
+		return df
+
+
 	if op == "select":
-		return [out_df]
+		result = [out_df]
 
 	if op == "unite":
 		candidates = []
@@ -69,6 +89,9 @@ def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 			# if the united column is removed
 			# (it doesn't make sense to have both separate columns projected away 
 			#  for the outermost level, otherwise unite is non-sense)
+			if np.any(out_df == "??_??"):
+				prlog("found the enemy value unexpected\n")
+				exit(0)
 			candidates += [out_df]
 
 		# if the united column is in the output
@@ -83,21 +106,24 @@ def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 					def incorporate_wild_card(df):
 						df[c] = np.where(df[c] == wild_card, df[c] + '_' + df[c],df[c])
 						return df
-					t = Separate(Table(0), i).eval([incorporate_wild_card(out_df)])
-					candidates += [t]
+					t = Separate(Table(0), i).eval([incorporate_wild_card(out_df.copy())])
+					cand = convert_abstract2(t)
+					if np.any(cand == "??_??"):
+						prlog("found the enemy value early\n")
+						exit(0)
+					candidates += [cand]
 				else:
+					if np.any(out_df == "??_??"):
+						prlog("found the enemy value unexpected\n")
+						exit(0)
 					candidates += [out_df]
-		return candidates
+		result = candidates
 
 	if op == "filter":
-		return [out_df]
+		result = [out_df]
 
 	if op == "separate":
 		#TODO: as with the one-separated case, loses some information 
-		def convert_abstract(df,wild_card = "??"):
-			df = pd.DataFrame(np.where(wild_card in df, wild_card, df), index=df.index, columns = df.columns)
-			return df
-
 		# enumerate candidate key-value columns
 		candidates = []
 
@@ -127,7 +153,7 @@ def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 				t = Unite(Table(0), sep_col_indexes[1], sep_col_indexes[0], sep).eval([out_df])
 				candidates.append(convert_abstract(t))
 
-		return candidates
+		result = candidates
 
 	if op == "spread":
 		candidates = []
@@ -166,7 +192,7 @@ def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 			t = t[[c for c in t.columns if c != "varNameColumn"]]
 			candidates += [t]
 
-		return candidates
+		result = candidates
 
 	if op in ["gather", "gather_neg"]:
 		candidates = []
@@ -181,7 +207,7 @@ def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 			t = t.drop_duplicates()
 			candidates += [t]
 
-		return candidates
+		result = candidates
 
 	if op in ["mutate", "mutate_custom", "cumsum", "group_sum"]:
 
@@ -202,7 +228,15 @@ def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 			t = out_df[[c for c in cols if c != new_col]]
 			candidates += [t]
 
-		return candidates
+		result = candidates
+
+	for c in result:
+		prlog("One result is:\n" + str(c.to_numpy())+"\n",pr=True)
+		if np.any(c == "??_??"):
+			prlog("the banned value has entered the system",pr=True)
+			exit(0)
+	prlog("\n",pr=True)
+	return result
 
 if __name__ == '__main__':
 

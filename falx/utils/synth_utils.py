@@ -16,53 +16,69 @@ def remove_duplicate_columns(df):
 
         for j, c2 in enumerate(df.columns):    
             if i >= j: continue
-            if t_or_l_inclusion(tuple(df[c1]), tuple(df[c2])):
+            if t_or_l_inclusion(tuple(df[c1]), tuple(df[c2]),wild_card=None):
                 to_drop.append(c2)
 
     ret_table = df[[c for c in df.columns if c not in to_drop]]
     return ret_table
 
+def prlog(s,pr=False):
+    if pr:
+        print(s)
+    with open("/Users/peter/Documents/UCSB/falx/falx/output/peterlogs/interfacelog.txt",'a') as f:
+        f.write(s)
 
-def check_table_inclusion(table1, table2, wild_card=None):
+def check_table_inclusion(table1, table2, wild_card="??"):
     """check if table1 is included by table2 (projection + subset), 
         this is sound but not complete: 
             if it thinks two tables are not equal, they absolutely inequal, 
         tables are records"""
-    if len(table1) == 0:
-        return True
+    res = align_table_schema(table1, table2)
+    if res is None:
+        return False
+    if res == False:
+        return False
+    if res == []:
+        return False
+    if res == {}:
+        return False
+    return True
 
-    mapping = {}
-    vals2_dicts = {}
-    for k2 in table2[0].keys():
-        vals2_dicts[k2] = construct_value_dict([r[k2] for r in table2 if k2 in r])
+    # if len(table1) == 0:
+    #     return True
+
+    # mapping = {}
+    # vals2_dicts = {}
+    # for k2 in table2[0].keys():
+    #     vals2_dicts[k2] = construct_value_dict([r[k2] for r in table2 if k2 in r])
     
-    for k1 in table1[0].keys():
-        mapping[k1] = []
-        vals1_dict = construct_value_dict([r[k1] for r in table1 if k1 in r])
-        for k2 in table2[0].keys():
-            vals2_dict = vals2_dicts[k2]
-            contained = True
-            for x in vals1_dict:
+    # for k1 in table1[0].keys():
+    #     mapping[k1] = []
+    #     vals1_dict = construct_value_dict([r[k1] for r in table1 if k1 in r])
+    #     for k2 in table2[0].keys():
+    #         vals2_dict = vals2_dicts[k2]
+    #         contained = True
+    #         for x in vals1_dict:
 
-                if wild_card != None and x == wild_card:
-                    # we consider this x value matches anything
-                    continue
+    #             if wild_card != None and x == wild_card:
+    #                 # we consider this x value matches anything
+    #                 continue
 
-                if x not in vals2_dict:
-                    contained = False
-                if contained == False:
-                    break
-            if contained:
-                mapping[k1].append(k2)
+    #             if x not in vals2_dict:
+    #                 contained = False
+    #             if contained == False:
+    #                 break
+    #         if contained:
+    #             mapping[k1].append(k2)
 
-    #print(mapping)
+    # #print(mapping)
 
-    # distill plausible mappings from the table
-    # not all choices generated from the approach above generalize, we need to check consistency
-    t1_schema = list(mapping.keys())
-    mapping_id_lists = [list(range(len(mapping[key]))) for key in t1_schema]
-    check_ok = all([len(l) > 0 for l in mapping_id_lists])
-    return check_ok
+    # # distill plausible mappings from the table
+    # # not all choices generated from the approach above generalize, we need to check consistency
+    # t1_schema = list(mapping.keys())
+    # mapping_id_lists = [list(range(len(mapping[key]))) for key in t1_schema]
+    # check_ok = all([len(l) > 0 for l in mapping_id_lists])
+    # return check_ok
 
 
 def t_or_l_inclusion(t1,t2,wild_card="??"):

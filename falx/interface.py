@@ -5,6 +5,7 @@ import itertools
 from pprint import pprint
 import numpy as np
 import copy
+import random
 
 sys.path.append(os.path.abspath('..'))
 
@@ -13,6 +14,8 @@ from falx.table import synthesizer as table_synthesizer
 from falx.utils import synth_utils
 from falx.utils import eval_utils
 from falx.utils import vis_utils
+from symbolic import SymTable
+
 
 from falx.visualization.chart import VisDesign
 from falx.visualization.matplotlib_chart import MatplotlibChart
@@ -27,9 +30,16 @@ np.random.seed(2019)
 logger = get_logger("interface")
 logger.setLevel('INFO')
 
-with open("/Users/peter/Documents/UCSB/falx/falx/peterlogs/interfacelog.txt",'w') as f:
+with open("/Users/peter/Documents/UCSB/falx/falx/output/peterlogs/interfacelog.txt",'w') as f:
     f.write("starting up interface...\n")
 
+wildcard = "??"
+
+def prlog(s,pr=False):
+    if pr:
+        print(s)
+    with open("/Users/peter/Documents/UCSB/falx/falx/output/peterlogs/interfacelog.txt",'a') as f:
+        f.write(s)
 
 class FalxInterface(object):
 
@@ -39,6 +49,7 @@ class FalxInterface(object):
         "solution_limit": 5,
         "time_limit_sec": 10,
         "max_prog_size": 2,
+        "lightweight": True,
 
         "grammar": {
             "operators": ["select", "unite", "filter", "separate", "spread",
@@ -82,8 +93,9 @@ class FalxInterface(object):
 
         return config
 
+
     @staticmethod
-    def synthesize(inputs, raw_trace, extra_consts=[], group_results=False, config={}, throw_away_rows_or_cols = True, num_samples=None):
+    def synthesize(inputs, raw_trace, extra_consts=[], group_results=False, config={}, throw_away_rows_or_cols = False, num_samples=None, p_abs=None, deduction=True):
         """synthesize table prog and vis prog from input and output traces
         Inputs:
             input tables: a list of input tables that the synthesizer will take into consideration
@@ -102,8 +114,7 @@ class FalxInterface(object):
                       "block_sketches": [], "block_program_symbols": [], "vis_backend": "vegalite" }
         """
 
-        with open("/Users/peter/Documents/UCSB/falx/falx/peterlogs/interfacelog.txt",'a') as f:
-            f.write("starting to synthesize...\n")
+        prlog("starting to synthesize...\n")
 
         # update synthesizer config
         config = FalxInterface.update_config(config)
@@ -126,6 +137,12 @@ class FalxInterface(object):
         logger.info("# Synthesizer configuration")
         logger.info(json.dumps(config, indent=2))
 
+        synthesizer = table_synthesizer.Synthesizer(config=config["grammar"])
+        if deduction:
+            synthf = synthesizer.enumerative_synthesis
+        else:
+            synthf = synthesizer.enumerative_search
+
         def remove_demonstrations(inst):
             r_count = 0
             r_set = {}
@@ -133,7 +150,7 @@ class FalxInterface(object):
             c_set = {}
             for r,i in zip(inst,range(len(inst))):
                 for k,v in r.items():
-                    if v == "??":
+                    if v == wildcard:
                         c_set[k] = True
                         r_set[i] = True
             for k in c_set:
@@ -143,7 +160,94 @@ class FalxInterface(object):
             if r_count < len(inst):
                 return [r for r,i in zip(inst,range(len(inst))) if i not in r_set]
             else:
+                keys = list(c_set.keys())
+                random.shuffle(keys)
                 return [{k:v for (k,v) in r.items() if k not in c_set} for r in inst]
+                #newinst = [{k:v for (k,v) in r.items() if k!=keys[0]} for r in inst]
+                #res = remove_demonstrations(newinst)
+                return res
+
+
+        def sample_symbolic_table(symtable, size, p = 0.25, strategy="diversity"):
+            """given a symbolic table, sample a smaller symbolic table that is contained by it
+            Args:
+                symtable: the input symbolic table
+                size: the number of rows we want for the output table.
+            Returns:
+                the output table sample
+            """
+            p_abs = p
+            if "E" in p_abs:
+                p_abs = p_abs.split("E")[0]
+                changeEveryRow = True
+            else:
+                changeEveryRow = False
+            p_abs = float(p_abs)
+
+
+            if size > len(symtable.values):
+                size = len(symtable.values)
+
+            if strategy == "uniform":
+                chosen_indices = np.random.choice(list(range(len(symtable.values))), size, replace=False)
+            elif strategy == "diversity":
+                indices = set(range(len(symtable.values)))
+                chosen_indices = set()
+                for i in range(size):
+                    pool = indices - chosen_indices
+                    candidate_size = min([20, len(pool)])
+                    candidates = np.random.choice(list(pool), size=candidate_size, replace=False)
+                    index = pick_diverse_candidate_index(candidates, chosen_indices, symtable.values)
+                    chosen_indices.add(index)
+
+            sample_values = [symtable.values[i] for i in chosen_indices]
+
+            total_abstracted = 0.0
+            for row in sample_values:
+                if changeEveryRow: total_abstracted = 0.0
+                keys = list(row.keys())
+                random.shuffle(keys)
+                for k in keys:
+                    if total_abstracted >= p_abs:
+                        break
+                    row[k] = wildcard
+                    total_abstracted += (1.0/len(keys))
+
+            symtable_sample = SymTable(sample_values)
+            return symtable_sample
+
+
+        def pick_diverse_candidate_index(candidate_indices, chosen_indices, full_table):
+            """according to current_chosen_row_indices and the full table, 
+               choose the best candidate that maximize """
+            keys = list(full_table[0].keys())
+            cardinality = [len(set([r[key] for r in full_table])) for key in keys]
+            def card_score_func(card_1, card_2):
+                if card_1 == 1 and card_2 > 1:
+                    return 0
+                return 1
+            scores = []
+            for x in candidate_indices:
+                temp_card = [len(set([full_table[i][key] for i in list(chosen_indices) + [x]])) for key in keys]
+                score = sum([card_score_func(temp_card[i], cardinality[i]) for i in range(len(keys))])
+                scores.append(score)
+            return candidate_indices[np.argmax(scores)]
+
+        def convert_sym_data(sym_data):
+            true_output = None
+            if num_samples != None:
+                print("hihi")
+                true_output_view = sym_data.instantiate()
+                true_output = []
+                for row in true_output_view:
+                    true_output.append(copy.deepcopy(row))
+                print(true_output)
+                sym_data = sample_symbolic_table(sym_data, num_samples, p=p_abs)
+                return sym_data, true_output
+            else:
+                return sym_data, None
+
+
 
         candidates = []
         for sym_data, chart in abstract_designs:
@@ -153,34 +257,40 @@ class FalxInterface(object):
             if not isinstance(sym_data, (list,)):
                 # single-layer chart
 
-                synthesizer = table_synthesizer.Synthesizer(config=config["grammar"])
 
-                true_output = None
-                if num_samples != None:
-                    print("hihi")
-                    sample_sym_data = sample_symbolic_table(sym_data, num_samples)
-                    true_output = sym_data.instantiate()
-                else:
-                    print("hoho")
-                    sample_sym_data = sym_data
+                sym_data, true_output = convert_sym_data(sym_data)
+                # true_output = None
+                # if num_samples != None:
+                #     print("hihi")
+                #     true_output_view = sym_data.instantiate()
+                #     true_output = []
+                #     for row in true_output_view:
+                #         true_output.append(copy.deepcopy(row))
+                #     print(true_output)
+                #     sym_data = sample_symbolic_table(sym_data, num_samples)
+                # else:
+                #     print("hoho")
 
-                print("==> table synthesis input:")
-                print(sym_data.instantiate())
+                prlog("==> table synthesis input:\n",pr=True)
+                prlog(str(sym_data.instantiate())+"\n\n",pr=True)
 
                 instantiated = sym_data.instantiate()
 
-                with open("/Users/peter/Documents/UCSB/falx/falx/peterlogs/interfacelog.txt",'a') as f:
-                    f.write(str(instantiated) + "\n")
+                prlog(str(instantiated) + "\n")
 
                 if throw_away_rows_or_cols:
                     instantiated = remove_demonstrations(instantiated)
+                    prlog("after: " + str(instantiated) + "\n")
 
-                candidate_progs = synthesizer.enumerative_synthesis(
-                                    inputs, instantiated,
+
+                candidate_progs = synthf(
+                                    inputs,instantiated,
                                     max_prog_size=config["max_prog_size"],
                                     time_limit_sec=config["time_limit_sec"],
                                     solution_limit=config["solution_limit"],
-                                    true_output=true_output)
+                                    lightweight=config["lightweight"],
+                                    true_output=true_output
+                                    )
 
                 for p in candidate_progs:
                     output = p.eval(inputs).to_dict(orient="records")
@@ -198,22 +308,24 @@ class FalxInterface(object):
                             vis_design = MatplotlibChart(output, copy.deepcopy(chart))
                             candidates.append((p.stmt_string(), vis_design.to_string_spec(field_mapping)))
             else:
-                synthesizer = table_synthesizer.Synthesizer(config=config["grammar"])
-
-
                 # multi-layer charts
                 # layer_candidate_progs[i] contains all programs that transform inputs to output[i]
                 # synthesize table transformation programs for each layer
                 layer_candidate_progs = []
                 for d in sym_data:
+                    sym_data, true_output = convert_sym_data(d)
                     print("==> table synthesis input:")
-                    print(d.instantiate())
+                    print(sym_data.instantiate())
                     layer_candidate_progs.append(
-                        synthesizer.enumerative_synthesis(
-                            inputs, d.instantiate(),
+                        synthf(
+                            inputs, remove_demonstrations(sym_data.instantiate()),
                             max_prog_size=config["max_prog_size"],
                             time_limit_sec=config["time_limit_sec"],
-                            solution_limit=config["solution_limit"]))
+                            solution_limit=config["solution_limit"],
+                            true_output=true_output))
+
+                if num_samples != None:
+                    exit(0)
 
                 # iterating over combinations for different layers
                 layer_id_lists = [list(range(len(l))) for l in layer_candidate_progs]
