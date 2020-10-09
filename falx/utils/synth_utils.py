@@ -101,6 +101,7 @@ def align_table_schema(table1, table2, check_equivalence=False, boolean_result=F
 
     if len(table1) > len(table2):
         # cannot find any mapping
+        print("no mapping because t1 > t2")
         return None
 
     if boolean_result and len(table1) == 0:

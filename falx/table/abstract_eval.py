@@ -26,7 +26,7 @@ def backward_eval(node, out_df, is_outer_most=True):
 	all_premesis_chains = []
 	if node["op"] != "table_ref":
 		# evaluate all possible premise the direct child node
-		prlog("Going backward from: \n" + str(out_df.to_dict(orient="records")) + "\n\n",pr=True)
+		#prlog("Going backward from: \n" + str(out_df.to_dict(orient="records")) + "\n\n",pr=True)
 		inp_df_list = backward_eval_one_step(node["op"], out_df, is_outer_most)
 		for inp_df in inp_df_list:
 			# recursively calculate all premises from children
@@ -61,7 +61,7 @@ def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 	schema = extract_table_schema(out_df)
 
 	result = None
-	prlog("the operator is " + op + "\n",pr=True)
+	#prlog("the operator is " + op + "\n",pr=True)
 
 	def convert_abstract(df,wild_card="??"):
 		def qin(x):
@@ -89,9 +89,6 @@ def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 			# if the united column is removed
 			# (it doesn't make sense to have both separate columns projected away 
 			#  for the outermost level, otherwise unite is non-sense)
-			if np.any(out_df == "??_??"):
-				prlog("found the enemy value unexpected\n")
-				exit(0)
 			candidates += [out_df]
 
 		# if the united column is in the output
@@ -108,14 +105,8 @@ def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 						return df
 					t = Separate(Table(0), i).eval([incorporate_wild_card(out_df.copy())])
 					cand = convert_abstract2(t)
-					if np.any(cand == "??_??"):
-						prlog("found the enemy value early\n")
-						exit(0)
 					candidates += [cand]
 				else:
-					if np.any(out_df == "??_??"):
-						prlog("found the enemy value unexpected\n")
-						exit(0)
 					candidates += [out_df]
 		result = candidates
 
@@ -230,12 +221,6 @@ def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 
 		result = candidates
 
-	for c in result:
-		prlog("One result is:\n" + str(c.to_numpy())+"\n",pr=True)
-		if np.any(c == "??_??"):
-			prlog("the banned value has entered the system",pr=True)
-			exit(0)
-	prlog("\n",pr=True)
 	return result
 
 if __name__ == '__main__':

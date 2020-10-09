@@ -98,7 +98,7 @@ class Synthesizer(object):
 						candidates[level].append(q)
 
 		for level in range(0, size + 1):
-			candidates[level] = [q for q in candidates[level] if not enum_strategies.disable_sketch(q, new_vals, has_sep)]
+			candidates[level] = [q for q in candidates[level] ]#if not enum_strategies.disable_sketch(q, new_vals, has_sep)]
 		return candidates
 
 	def pick_vars(self, ast, inputs):
@@ -163,8 +163,9 @@ class Synthesizer(object):
 
 	def iteratively_instantiate_and_print(self, p, inputs, level, print_programs=False):
 		"""iteratively instantiate a program (for the purpose of debugging)"""
-		if print_programs:
-			print(f"{'  '.join(['' for _ in range(level)])}{p.stmt_string()}")
+		#TODO: add this
+		#if print_programs:
+			#print(f"{'  '.join(['' for _ in range(level)])}{p.stmt_string()}")
 		results = []
 		if p.is_abstract():
 			ast = p.to_dict()
@@ -247,8 +248,7 @@ class Synthesizer(object):
 			return [p]
 
 	def enumerative_all_programs(self, inputs, output, max_prog_size):
-		"""Given inputs and output, enumerate all programs in the search space until 
-			find a solution p such that output ⊆ subseteq p(inputs)  """
+		"""Given inputs and output, enumerate all programs in the search space """
 		all_sketches = self.enum_sketches(inputs, output, size=max_prog_size)
 		concrete_programs = []
 		for level, sketches in all_sketches.items():
@@ -267,63 +267,26 @@ class Synthesizer(object):
 		print("----")
 		print(f"number of programs: {len(concrete_programs)}")
 
-	#todo: these optional args do almost nothing
-	def enumerative_search(self, inputs, output, max_prog_size, time_limit_sec=None, solution_limit=None, true_output=None):
-		"""Given inputs and output, enumerate all programs in the search space until 
-			find a solution p such that output ⊆ subseteq p(inputs)  """
-		if true_output != None:
-			prlog("True output is: " + str(true_output))
+	def instantiate_programs_from_sketch(self, s, inputs, output, deduction=True):
+		if not deduction:
+			return self.iteratively_instantiate_and_print(s, inputs, 1) #TODO: figure out what this 1 does
+		else:
+			ast = s.to_dict()
+			out_df = pd.DataFrame.from_dict(output)
 
-		all_sketches = self.enum_sketches(inputs, output, size=max_prog_size)
-		candidates = []
-		prlog("true output:\n" + str(output) + "\n")
-		for level, sketches in all_sketches.items():
-			for s in sketches:
-				concrete_programs = self.iteratively_instantiate_and_print(s, inputs, 1)
-				prlog("\nSketch\n:" + str(s.to_dict())+"\n")
-				prlog("CONCRETE PROGRAMS:\n"+str(concrete_programs) + "\n")
+			out_df = remove_duplicate_columns(out_df)
+			# all premise chains for the given ast
+			premise_chains = abstract_eval.backward_eval(ast, out_df)
 
-				for p in concrete_programs:
-					try:
-						t = p.eval(inputs)
-						temp = False
-						tempTrue = False
-						if align_table_schema(output, t.to_dict(orient="records")) != None:
-							temp = True
-							if true_output != None:
-								global attempt_count
-								if align_table_schema(true_output,t.to_dict(orient="records"), boolean_result=True): #and align_table_schema(t.to_dict(orient="records"), true_output, boolean_result=True):
-									print("# candidates before getting a good enough solution: " + str(attempt_count))
-									tempTrue = True
-									#return candidates
-								else:
-									attempt_count += 1
+			#TODO: figure out how the time limit works
+			# remaining_time_limit = time_limit_sec - (time.time() - start_time) if time_limit_sec is not None else None
+			return self.iteratively_instantiate_with_premises_check(s, inputs, premise_chains, 5000000000)
 
-							print(p.stmt_string())
-							print(t)
-							candidates.append(p)
-						prlog("sketch: " + str(s.to_dict()) + "\n")
-						prlog("program: " + str(p.to_dict()) + "\n")
-						if temp:
-							prlog("MATCH!\n")
-						if tempTrue:
-							prlog("CORRECT!\n")
-						prlog("candidate output:\n" + str(t) + "\n")
-						
-					except Exception as e:
-						print(f"[error] {sys.exc_info()[0]} {e}")
-						tb = sys.exc_info()[2]
-						tb_info = ''.join(traceback.format_tb(tb))
-						print(tb_info)
-		print("----")
-		print(f"number of programs: {len(candidates)}")
-		return candidates
 
-	def enumerative_synthesis(self, inputs, output, max_prog_size, time_limit_sec=None, solution_limit=None, true_output=None, lightweight=False):
-		"""Given inputs and output, enumerate all programs with premise check until 
-			find a solution p such that output ⊆ subseteq p(inputs) """
 
-		prlog("the solution limit is: " + str(solution_limit))
+	def enumerative_synthesis(self, inputs, output, max_prog_size, time_limit_sec=None, solution_limit=None, true_output=None, lightweight=False, deduction=True):
+		
+		prlog("the solution limit is: " + str(solution_limit),pr=True)
 
 		def encache(cands,k):
 			global candidate_programs_cache
@@ -333,72 +296,169 @@ class Synthesizer(object):
 			candidate_programs_cache = (output, cands, k)
 			return cands
 
-		global candidate_programs_cache
-		min_prog_size = 0
-		if candidate_programs_cache is not None:
-			(prevOutput, prevCands,k) = candidate_programs_cache
-			if align_table_schema(prevOutput,output, boolean_result=True):
-				if lightweight:
-					return [cand for cand in prevCands if align_table_schema(output,cand.eval(inputs).to_dict(orient="records"),boolean_result=True)]
-				else:
-					min_prog_size = k
-
-		print("solution limit is " + str(solution_limit))
-
 		start_time = time.time()
 
 		all_sketches = self.enum_sketches(inputs, output, size=max_prog_size)
 		candidates = []
 		for level, sketches in all_sketches.items():
-			if min_prog_size > level:
-				continue
+			# for incrementality
+			# if min_prog_size > level:
+			# 	continue
 			for s in sketches:
-				print(s.stmt_string())
-				ast = s.to_dict()
-				out_df = pd.DataFrame.from_dict(output)
+				concrete_programs = self.instantiate_programs_from_sketch(s,inputs,output,deduction=deduction)
+				for p in concrete_programs:
+					try:
+						t = p.eval(inputs)
+						if align_table_schema(output, t.to_dict(orient="records")) != None:
+							candidates.append(p)
 
-				out_df = remove_duplicate_columns(out_df)
-				# all premise chains for the given ast
-				premise_chains = abstract_eval.backward_eval(ast, out_df)
-
-				remaining_time_limit = time_limit_sec - (time.time() - start_time) if time_limit_sec is not None else None
-				programs = self.iteratively_instantiate_with_premises_check(s, inputs, premise_chains, remaining_time_limit)
-				
-				for p in programs:
-					# check table consistensy
-					t = p.eval(inputs)
-					alignment_result = align_table_schema(output, t.to_dict(orient="records"))
-					if alignment_result != None:
-						candidates.append(p)
-						if true_output != None:
-							global attempt_count
-							prlog("hello: attempt count is " + str(attempt_count) + "\n",pr=True)
-
-							correct_table_trans = align_table_schema(true_output,t.to_dict(orient="records"), boolean_result=True)
-							other_dir = align_table_schema(t.to_dict(orient="records"), true_output, boolean_result=True)
-							# if correct_table_trans and not other_dir:
-							# 	print("TRUE OUTPUT (length " + str(len(true_output)) + "): " + str(true_output))
-							# 	print("P's OUTPUT (length " + str(len(t.to_dict(orient="records"))) + "): " + str(t.to_dict(orient="records")))
-							if correct_table_trans and other_dir:
-								prlog("# candidates before getting the correct solution: " + str(attempt_count), pr=True)
-								prlog("\n about to return from synthesis ....\n",pr=True)
-								return encache(candidates,level)
-							else:
-								attempt_count += 1
-							prlog("hello: now attempt count is " + str(attempt_count) + "\n",pr=True)
-
-					if solution_limit is not None and len(candidates) >= solution_limit:
-						prlog("\n\n found " + str(len(candidates)) + " candidates ....\n\n")
-						return encache(candidates,level)
-				
-				# early return if the termination condition is met
-				# TODO: time_limit may be exceeded if the synthesizer is stuck on iteratively instantiation
-				if time_limit_sec is not None and time.time() - start_time > time_limit_sec:
-					prlog("\n\n ran out of time ....\n\n")
-					return encache(candidates,level)
-			if len(candidates) > 0:
-				prlog("finished out level " + str(level) + " with candidates ...")
-				return encache(candidates,level+1)
+					#TODO: is this necessary?
+					except Exception as e:
+						print(f"[error] {sys.exc_info()[0]} {e}")
+						tb = sys.exc_info()[2]
+						tb_info = ''.join(traceback.format_tb(tb))
+						print(tb_info)
 
 		prlog("\n\n no sketches left to try ....\n\n")
 		return encache(candidates,max_prog_size+1)
+
+
+	# #todo: these optional args do almost nothing
+	# def enumerative_search(self, inputs, output, max_prog_size, time_limit_sec=None, solution_limit=None, true_output=None):
+	# 	"""Given inputs and output, enumerate all programs in the search space until 
+	# 		find a solution p such that output ⊆ subseteq p(inputs)  """
+	# 	if true_output != None:
+	# 		prlog("True output is: " + str(true_output))
+
+	# 	all_sketches = self.enum_sketches(inputs, output, size=max_prog_size)
+	# 	candidates = []
+	# 	prlog("true output:\n" + str(output) + "\n")
+	# 	for level, sketches in all_sketches.items():
+	# 		for s in sketches:
+	# 			concrete_programs = self.iteratively_instantiate_and_print(s, inputs, 1)
+	# 			prlog("\nSketch\n:" + str(s.to_dict())+"\n")
+	# 			prlog("CONCRETE PROGRAMS:\n"+str(concrete_programs) + "\n")
+
+	# 			for p in concrete_programs:
+	# 				try:
+	# 					t = p.eval(inputs)
+	# 					temp = False
+	# 					tempTrue = False
+	# 					if align_table_schema(output, t.to_dict(orient="records")) != None:
+	# 						temp = True
+	# 						#used for evaluation, but not exploration
+	# 						# if true_output != None:
+	# 						# 	global attempt_count
+	# 						# 	if align_table_schema(true_output,t.to_dict(orient="records"), boolean_result=True): #and align_table_schema(t.to_dict(orient="records"), true_output, boolean_result=True):
+	# 						# 		print("# candidates before getting a good enough solution: " + str(attempt_count))
+	# 						# 		tempTrue = True
+	# 						# 		#return candidates
+	# 						# 	else:
+	# 						# 		attempt_count += 1
+
+	# 						print(p.stmt_string())
+	# 						print(t)
+	# 						candidates.append(p)
+	# 					prlog("sketch: " + str(s.to_dict()) + "\n")
+	# 					prlog("program: " + str(p.to_dict()) + "\n")
+	# 					if temp:
+	# 						prlog("MATCH!\n")
+	# 					if tempTrue:
+	# 						prlog("CORRECT!\n")
+	# 					prlog("candidate output:\n" + str(t) + "\n")
+						
+	# 				except Exception as e:
+	# 					print(f"[error] {sys.exc_info()[0]} {e}")
+	# 					tb = sys.exc_info()[2]
+	# 					tb_info = ''.join(traceback.format_tb(tb))
+	# 					print(tb_info)
+	# 	print("----")
+	# 	print(f"number of programs: {len(candidates)}")
+	# 	return candidates
+
+	# def enumerative_synthesis(self, inputs, output, max_prog_size, time_limit_sec=None, solution_limit=None, true_output=None, lightweight=False):
+	# 	"""Given inputs and output, enumerate all programs with premise check until 
+	# 		find a solution p such that output ⊆ subseteq p(inputs) """
+
+	# 	prlog("the solution limit is: " + str(solution_limit),pr=True)
+
+	# 	def encache(cands,k):
+	# 		global candidate_programs_cache
+
+	# 		if candidate_programs_cache is not None:
+	# 			prlog("OVERWRITING CACHE")
+	# 		candidate_programs_cache = (output, cands, k)
+	# 		return cands
+
+	# 	#incrementality
+	# 	# global candidate_programs_cache
+	# 	# min_prog_size = 0
+	# 	# if candidate_programs_cache is not None:
+	# 	# 	(prevOutput, prevCands,k) = candidate_programs_cache
+	# 	# 	if align_table_schema(prevOutput,output, boolean_result=True):
+	# 	# 		if lightweight:
+	# 	# 			return [cand for cand in prevCands if align_table_schema(output,cand.eval(inputs).to_dict(orient="records"),boolean_result=True)]
+	# 	# 		else:
+	# 	# 			min_prog_size = k
+
+	# 	start_time = time.time()
+
+	# 	all_sketches = self.enum_sketches(inputs, output, size=max_prog_size)
+	# 	candidates = []
+	# 	for level, sketches in all_sketches.items():
+	# 		# for incrementality
+	# 		# if min_prog_size > level:
+	# 		# 	continue
+	# 		for s in sketches:
+	# 			print(s.stmt_string())
+	# 			ast = s.to_dict()
+	# 			out_df = pd.DataFrame.from_dict(output)
+
+	# 			out_df = remove_duplicate_columns(out_df)
+	# 			# all premise chains for the given ast
+	# 			premise_chains = abstract_eval.backward_eval(ast, out_df)
+
+	# 			remaining_time_limit = time_limit_sec - (time.time() - start_time) if time_limit_sec is not None else None
+	# 			programs = self.iteratively_instantiate_with_premises_check(s, inputs, premise_chains, remaining_time_limit)
+				
+	# 			for p in programs:
+	# 				# check table consistensy
+	# 				t = p.eval(inputs).to_dict(orient="records")
+	# 				alignment_result = check_table_inclusion(output, t)
+	# 				if alignment_result:
+	# 					candidates.append(p)
+	# 					# TODO: make this a flag (or, even better, separate it out somehow)
+	# 					# if true_output != None:
+	# 					# 	global attempt_count
+	# 					# 	prlog("hello: attempt count is " + str(attempt_count) + "\n",pr=True)
+
+	# 					# 	correct_table_trans = align_table_schema(true_output,t.to_dict(orient="records"), boolean_result=True)
+	# 					# 	other_dir = align_table_schema(t.to_dict(orient="records"), true_output, boolean_result=True)
+	# 					# 	# if correct_table_trans and not other_dir:
+	# 					# 	# 	print("TRUE OUTPUT (length " + str(len(true_output)) + "): " + str(true_output))
+	# 					# 	# 	print("P's OUTPUT (length " + str(len(t.to_dict(orient="records"))) + "): " + str(t.to_dict(orient="records")))
+	# 					# 	if correct_table_trans and other_dir:
+	# 					# 		prlog("# candidates before getting the correct solution: " + str(attempt_count), pr=True)
+	# 					# 		prlog("\n about to return from synthesis ....\n",pr=True)
+	# 					# 		return encache(candidates,level)
+	# 					# 	else:
+	# 					# 		attempt_count += 1
+	# 					# 	prlog("hello: now attempt count is " + str(attempt_count) + "\n",pr=True)
+
+	# 				#TODO: add this back in, make it more clear
+	# 				# if solution_limit is not None and len(candidates) >= solution_limit:
+	# 				# 	prlog("\n\n found " + str(len(candidates)) + " candidates ....\n\n")
+	# 				# 	return encache(candidates,level)
+				
+	# 			# early return if the termination condition is met
+	# 			# TODO: time_limit may be exceeded if the synthesizer is stuck on iteratively instantiation
+	# 			# if time_limit_sec is not None and time.time() - start_time > time_limit_sec:
+	# 			# 	prlog("\n\n ran out of time ....\n\n")
+	# 			# 	return encache(candidates,level)
+	# 		# TODO: give a flag for this
+	# 		# if len(candidates) > 0:
+	# 		# 	prlog("finished out level " + str(level) + " with candidates ...")
+	# 		# 	return encache(candidates,level+1)
+
+	# 	prlog("\n\n no sketches left to try ....\n\n")
+	# 	return encache(candidates,max_prog_size+1)

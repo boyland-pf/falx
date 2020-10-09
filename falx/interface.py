@@ -2,10 +2,9 @@ import sys
 import os
 import json
 import itertools
+import copy
 from pprint import pprint
 import numpy as np
-import copy
-import random
 
 sys.path.append(os.path.abspath('..'))
 
@@ -16,7 +15,6 @@ from falx.utils import eval_utils
 from falx.utils import vis_utils
 from symbolic import SymTable
 
-
 from falx.visualization.chart import VisDesign
 from falx.visualization.matplotlib_chart import MatplotlibChart
 from falx.visualization import visual_trace
@@ -24,6 +22,8 @@ from falx.visualization import visual_trace
 from falx.logger import get_logger
 
 from pprint import pprint
+
+
 
 np.random.seed(2019)
 
@@ -46,7 +46,7 @@ class FalxInterface(object):
     # the default confifguration for the synthesizer
     default_config = {
         # configurations related to table transformation program synthesizer
-        "solution_limit": 5,
+        "solution_limit": None,
         "time_limit_sec": 10,
         "max_prog_size": 2,
         "lightweight": True,
@@ -94,6 +94,22 @@ class FalxInterface(object):
         return config
 
 
+    def prep_synthesis_input(sym_data, config):
+        sym_data, true_output = eval_utils.convert_sym_data(sym_data, config)
+        instantiated = sym_data.instantiate()
+
+        if config["throwaway"]:
+            instantiated = eval_utils.remove_demonstrations(instantiated)
+            prlog("after: " + str(instantiated) + "\n")     
+
+        prlog("==> table synthesis input:\n",pr=True)
+        prlog(str(sym_data.instantiate())+"\n\n",pr=True)
+        prlog(str(instantiated) + "\n")
+
+        return [instantiated, true_output]
+
+  
+
     @staticmethod
     def synthesize(inputs, raw_trace, extra_consts=[], group_results=False, config={}, throw_away_rows_or_cols = False, num_samples=None, p_abs=None, deduction=True):
         """synthesize table prog and vis prog from input and output traces
@@ -125,10 +141,13 @@ class FalxInterface(object):
             example_trace = raw_trace
         # apply inverse semantics to obtain symbolic output table and vis programs
         abstract_designs = None
+
         if config["vis_backend"] == "vegalite":
             abstract_designs = VisDesign.inv_eval(example_trace)
         else:
             abstract_designs = MatplotlibChart.inv_eval(example_trace)
+
+        prep_config = {"num_samples": num_samples, "throwaway": throw_away_rows_or_cols, "p_abs": p_abs, "mandatory": {}}
 
         # sort pairs based on complexity of tables
         abstract_designs.sort(key=lambda x: len(x[0].values[0])
@@ -143,109 +162,7 @@ class FalxInterface(object):
         else:
             synthf = synthesizer.enumerative_search
 
-        def remove_demonstrations(inst):
-            r_count = 0
-            r_set = {}
-            c_count = 0
-            c_set = {}
-            for r,i in zip(inst,range(len(inst))):
-                for k,v in r.items():
-                    if v == wildcard:
-                        c_set[k] = True
-                        r_set[i] = True
-            for k in c_set:
-                c_count += 1
-            for r in r_set:
-                r_count += 1
-            if r_count < len(inst):
-                return [r for r,i in zip(inst,range(len(inst))) if i not in r_set]
-            else:
-                keys = list(c_set.keys())
-                random.shuffle(keys)
-                return [{k:v for (k,v) in r.items() if k not in c_set} for r in inst]
-                #newinst = [{k:v for (k,v) in r.items() if k!=keys[0]} for r in inst]
-                #res = remove_demonstrations(newinst)
-                return res
-
-
-        def sample_symbolic_table(symtable, size, p = 0.25, strategy="diversity"):
-            """given a symbolic table, sample a smaller symbolic table that is contained by it
-            Args:
-                symtable: the input symbolic table
-                size: the number of rows we want for the output table.
-            Returns:
-                the output table sample
-            """
-            p_abs = p
-            if "E" in p_abs:
-                p_abs = p_abs.split("E")[0]
-                changeEveryRow = True
-            else:
-                changeEveryRow = False
-            p_abs = float(p_abs)
-
-
-            if size > len(symtable.values):
-                size = len(symtable.values)
-
-            if strategy == "uniform":
-                chosen_indices = np.random.choice(list(range(len(symtable.values))), size, replace=False)
-            elif strategy == "diversity":
-                indices = set(range(len(symtable.values)))
-                chosen_indices = set()
-                for i in range(size):
-                    pool = indices - chosen_indices
-                    candidate_size = min([20, len(pool)])
-                    candidates = np.random.choice(list(pool), size=candidate_size, replace=False)
-                    index = pick_diverse_candidate_index(candidates, chosen_indices, symtable.values)
-                    chosen_indices.add(index)
-
-            sample_values = [symtable.values[i] for i in chosen_indices]
-
-            total_abstracted = 0.0
-            for row in sample_values:
-                if changeEveryRow: total_abstracted = 0.0
-                keys = list(row.keys())
-                random.shuffle(keys)
-                for k in keys:
-                    if total_abstracted >= p_abs:
-                        break
-                    row[k] = wildcard
-                    total_abstracted += (1.0/len(keys))
-
-            symtable_sample = SymTable(sample_values)
-            return symtable_sample
-
-
-        def pick_diverse_candidate_index(candidate_indices, chosen_indices, full_table):
-            """according to current_chosen_row_indices and the full table, 
-               choose the best candidate that maximize """
-            keys = list(full_table[0].keys())
-            cardinality = [len(set([r[key] for r in full_table])) for key in keys]
-            def card_score_func(card_1, card_2):
-                if card_1 == 1 and card_2 > 1:
-                    return 0
-                return 1
-            scores = []
-            for x in candidate_indices:
-                temp_card = [len(set([full_table[i][key] for i in list(chosen_indices) + [x]])) for key in keys]
-                score = sum([card_score_func(temp_card[i], cardinality[i]) for i in range(len(keys))])
-                scores.append(score)
-            return candidate_indices[np.argmax(scores)]
-
-        def convert_sym_data(sym_data):
-            true_output = None
-            if num_samples != None:
-                print("hihi")
-                true_output_view = sym_data.instantiate()
-                true_output = []
-                for row in true_output_view:
-                    true_output.append(copy.deepcopy(row))
-                print(true_output)
-                sym_data = sample_symbolic_table(sym_data, num_samples, p=p_abs)
-                return sym_data, true_output
-            else:
-                return sym_data, None
+        #defunct as of allowing 
 
 
 
@@ -257,55 +174,36 @@ class FalxInterface(object):
             if not isinstance(sym_data, (list,)):
                 # single-layer chart
 
-
-                sym_data, true_output = convert_sym_data(sym_data)
-                # true_output = None
-                # if num_samples != None:
-                #     print("hihi")
-                #     true_output_view = sym_data.instantiate()
-                #     true_output = []
-                #     for row in true_output_view:
-                #         true_output.append(copy.deepcopy(row))
-                #     print(true_output)
-                #     sym_data = sample_symbolic_table(sym_data, num_samples)
-                # else:
-                #     print("hoho")
-
-                prlog("==> table synthesis input:\n",pr=True)
-                prlog(str(sym_data.instantiate())+"\n\n",pr=True)
-
-                instantiated = sym_data.instantiate()
-
-                prlog(str(instantiated) + "\n")
-
-                if throw_away_rows_or_cols:
-                    instantiated = remove_demonstrations(instantiated)
-                    prlog("after: " + str(instantiated) + "\n")
-
+                prep_input = FalxInterface.prep_synthesis_input(sym_data, prep_config)
 
                 candidate_progs = synthf(
-                                    inputs,instantiated,
+                                    inputs,prep_input[0],
                                     max_prog_size=config["max_prog_size"],
                                     time_limit_sec=config["time_limit_sec"],
                                     solution_limit=config["solution_limit"],
                                     lightweight=config["lightweight"],
-                                    true_output=true_output
+                                    true_output=prep_input[1]
                                     )
 
+                print("There are " + str(len(candidate_progs)) + " programs")
                 for p in candidate_progs:
-                    output = p.eval(inputs).to_dict(orient="records")
+                    print("result: " + p.stmt_string())
+                    print("HHHHHHH")
 
-                    field_mappings = synth_utils.align_table_schema(sym_data.values, output, find_all_alignments=True)
+                for p in candidate_progs:
+                    candidate_output = p.eval(inputs).to_dict(orient="records")
+
+                    field_mappings = synth_utils.align_table_schema(prep_input[0], candidate_output, find_all_alignments=True)
                     if not throw_away_rows_or_cols:
                         assert(len(field_mappings) > 0)
 
                     for field_mapping in field_mappings:
                         if config["vis_backend"] == "vegalite":
-                            vis_design = VisDesign(data=output, chart=copy.deepcopy(chart))
+                            vis_design = VisDesign(data=candidate_output, chart=copy.deepcopy(chart))
                             vis_design.update_field_names(field_mapping)
                             candidates.append((p.stmt_string(), vis_design))
                         else:
-                            vis_design = MatplotlibChart(output, copy.deepcopy(chart))
+                            vis_design = MatplotlibChart(candidate_output, copy.deepcopy(chart))
                             candidates.append((p.stmt_string(), vis_design.to_string_spec(field_mapping)))
             else:
                 # multi-layer charts
@@ -313,19 +211,18 @@ class FalxInterface(object):
                 # synthesize table transformation programs for each layer
                 layer_candidate_progs = []
                 for d in sym_data:
-                    sym_data, true_output = convert_sym_data(d)
-                    print("==> table synthesis input:")
-                    print(sym_data.instantiate())
+                    prep_input = FalxInterface.prep_synthesis_input(d, prep_config)
+
                     layer_candidate_progs.append(
                         synthf(
-                            inputs, remove_demonstrations(sym_data.instantiate()),
+                            inputs, prep_input[0],
                             max_prog_size=config["max_prog_size"],
                             time_limit_sec=config["time_limit_sec"],
                             solution_limit=config["solution_limit"],
-                            true_output=true_output))
+                            true_output=prep_input[1]))
 
-                if num_samples != None:
-                    exit(0)
+                # if num_samples != None:
+                #     exit(0)
 
                 # iterating over combinations for different layers
                 layer_id_lists = [list(range(len(l))) for l in layer_candidate_progs]
@@ -339,6 +236,7 @@ class FalxInterface(object):
 
                     all_field_mappings = [synth_utils.align_table_schema(sym_data[k].values, output, find_all_alignments=True)
                             for k, output in enumerate(outputs)]
+                    all_field_mappings = [ms for ms in all_field_mappings if ms is not None]
 
                     mapping_id_lists = [list(range(len(l))) for l in all_field_mappings]
                     for mapping_id_choices in itertools.product(*mapping_id_lists):
