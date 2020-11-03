@@ -9,7 +9,8 @@ from falx.table.language import (HOLE, Node, Table, Select, Unite, Filter, Separ
 	Gather, GroupSummary, CumSum, Mutate, MutateCustom)
 from falx.table import enum_strategies
 from falx.table import abstract_eval
-from falx.utils.synth_utils import remove_duplicate_columns, check_table_inclusion, t_or_l_inclusion, align_table_schema, prlog
+from falx.utils.synth_utils import remove_duplicate_columns, check_table_inclusion, t_or_l_inclusion, align_table_schema, prlog, fit_progs_into_abstraction, prtime, matches_sketch, to_sketch
+
 
 abstract_combinators = {
 	"select": lambda q: Select(q, cols=HOLE),
@@ -31,6 +32,43 @@ attempt_count = 0
 
 global candidate_programs_cache
 candidate_programs_cache = None
+
+global known_programs
+known_programs = []
+
+#59
+#[[('gather', [{}]), ('separate', [{}])], [('gather', [{'5', '1'}]), ('separate', [{}]), ('spread', [{}, {}])]]
+
+#46
+# known_programs = [[('gather', [{'3'}])], [('separate', [{'0'}]), ('gather', [{'2'}])]]
+
+# 56
+# known_programs = [[('gather', [{'10'}])]]
+
+#37
+# known_programs = [
+# [('gather', [{'2'}]), ('mutate', [{}, {'-'}, {}])],
+# [('mutate', [{'5'}, {'-'}, {'2'}]), ('gather', [{'2'}])]]
+# known_programs = [
+# [('gather', [{'2'}]), ('mutate', [{}, {'-'}, {}])],
+# [('mutate', [{'5'}, {'-'}, {'2'}]), ('gather', [{'2'}])]
+# [('mutate', [{'5'}, {'-'}, {'2'}])],
+# [('gather', [{'1', '3', '4'}]), ('group_sum', [{'0'}, {'4'}, {'sum'}])],
+# [('gather', [{}]), ('mutate', [{}, {'-'}, {}])],
+# [('cumsum', [{}]), ('mutate', [{'5'}, {'-'}, {'2'}])],
+# [('mutate', [{'5'}, {'-'}, {'2'}]), ('gather', [{}])],
+# [('mutate', [{'5'}, {'-'}, {'2'}]), ('cumsum', [{}])]]
+
+
+#21 or something
+# known_programs = [[('gather', [{'3'}])],
+# [('select', [{'0', '1', '3'}]), ('gather', [{}])],
+# [('gather', [{'3'}]), ('select', [{'0', '1'}])],
+# [('gather', [{}]), ('gather', [{}])],
+# [('gather', [{'3'}]), ('cumsum', [{}])],
+# [('gather', [{'3'}]), ('mutate', [{}, {}, {}])],
+# [('cumsum', [{}]), ('gather', [{'3'}])],
+# [('mutate', [{}, {}, {}]), ('gather', [{'3'}])]]
 
 def update_tree_value(node, path, new_val):
 	"""from a given ast node, locate the refence to the arg,
@@ -64,7 +102,15 @@ class Synthesizer(object):
 		else:
 			self.config = config
 
-	def enum_sketches(self, inputs, output, size):
+	def from_list_format(self, m):
+		sketch = Table(0)
+		for (op,args) in m:
+			sketch = abstract_combinators[op](sketch)
+		return sketch
+
+	def enum_sketches(self, inputs, output, size, heur=True):
+		start = time.time()
+		size = 3
 		"""enumerate program sketches up to the given size"""
 
 		# check if output contains a new value 
@@ -97,8 +143,10 @@ class Synthesizer(object):
 						q = abstract_combinators[op](copy.copy(p))
 						candidates[level].append(q)
 
-		for level in range(0, size + 1):
-			candidates[level] = [q for q in candidates[level] ]#if not enum_strategies.disable_sketch(q, new_vals, has_sep)]
+		if heur:
+			for level in range(0, size + 1):
+				candidates[level] = [q for q in candidates[level] if not enum_strategies.disable_sketch(q, new_vals, has_sep)]
+		prtime("sketch enumeration", time.time()-start)
 		return candidates
 
 	def pick_vars(self, ast, inputs):
@@ -181,8 +229,8 @@ class Synthesizer(object):
 
 	def iteratively_instantiate_with_premises_check(self, p, inputs, premise_chains, time_limit_sec=None):
 		"""iteratively instantiate abstract programs w/ promise check """
-
 		def instantiate_with_premises_check(p, inputs, premise_chains):
+			start_inst = time.time()
 			"""instantiate programs and then check each one of them against the premise """
 			results = []
 			if p.is_abstract():
@@ -192,6 +240,18 @@ class Synthesizer(object):
 				next_level_programs, level = self.instantiate_one_level(ast, inputs)
 
 				for _ast in next_level_programs:
+					start_match = time.time()
+					listsketch = to_sketch(Node.load_from_dict(_ast))
+					# print(to_sketch(Node.load_from_dict(_ast)))
+					cont = False
+					for q in known_programs:
+						if matches_sketch(listsketch,q,strict=True):
+							print("some of them can be skipped")
+							cont = True
+							break
+					prtime("sketch_matching",time.time()-start_match)
+					if cont:
+						continue
 
 					# force terminate if the remaining time is running out
 					if time_limit_sec is not None and time.time() - start_time > time_limit_sec:
@@ -204,9 +264,11 @@ class Synthesizer(object):
 
 						if subquery_res is None:
 							# check if the subquery result contains the premise
+							start = time.time()
 							subquery_node = get_node(_ast, subquery_path)
 							print("  {}".format(Node.load_from_dict(subquery_node).stmt_string()))
 							subquery_res = Node.load_from_dict(subquery_node).eval(inputs)
+							prtime("eval_in_instant",time.time()-start)
 							#print(subquery_res)
 
 						#print(subquery_res)
@@ -222,9 +284,10 @@ class Synthesizer(object):
 
 							results.append(Node.load_from_dict(_ast))
 							break
-
+				prtime("instant2", time.time()-start_inst)
 				return results
 			else:
+				prtime("instant2", time.time()-start_inst)
 				return []
 
 		print("time limit: {}".format(time_limit_sec))
@@ -247,36 +310,40 @@ class Synthesizer(object):
 			# handling concrete programs won't take long, allow them to proceed
 			return [p]
 
-	def enumerative_all_programs(self, inputs, output, max_prog_size):
-		"""Given inputs and output, enumerate all programs in the search space """
-		all_sketches = self.enum_sketches(inputs, output, size=max_prog_size)
-		concrete_programs = []
-		for level, sketches in all_sketches.items():
-			for s in sketches:
-				concrete_programs += self.iteratively_instantiate_and_print(s, inputs, 1, True)
-		for p in concrete_programs:
-			try:
-				t = p.eval(inputs)
-				print(p.stmt_string())
-				print(t)
-			except Exception as e:
-				print(f"[error] {sys.exc_info()[0]} {e}")
-				tb = sys.exc_info()[2]
-				tb_info = ''.join(traceback.format_tb(tb))
-				print(tb_info)
-		print("----")
-		print(f"number of programs: {len(concrete_programs)}")
+	# def enumerative_all_programs(self, inputs, output, max_prog_size):
+	# 	"""Given inputs and output, enumerate all programs in the search space """
+	# 	all_sketches = self.enum_sketches(inputs, output, size=max_prog_size)
+	# 	concrete_programs = []
+	# 	for level, sketches in all_sketches.items():
+	# 		for s in sketches:
+	# 			concrete_programs += self.iteratively_instantiate_and_print(s, inputs, 1, True)
+	# 	for p in concrete_programs:
+	# 		try:
+	# 			t = p.eval(inputs)
+	# 			print(p.stmt_string())
+	# 			print(t)
+	# 		except Exception as e:
+	# 			print(f"[error] {sys.exc_info()[0]} {e}")
+	# 			tb = sys.exc_info()[2]
+	# 			tb_info = ''.join(traceback.format_tb(tb))
+	# 			print(tb_info)
+	# 	print("----")
+	# 	print(f"number of programs: {len(concrete_programs)}")
 
 	def instantiate_programs_from_sketch(self, s, inputs, output, deduction=True):
 		if not deduction:
 			return self.iteratively_instantiate_and_print(s, inputs, 1) #TODO: figure out what this 1 does
 		else:
+			start = time.time()
 			ast = s.to_dict()
 			out_df = pd.DataFrame.from_dict(output)
 
 			out_df = remove_duplicate_columns(out_df)
+			prtime("conversion",time.time()-start)
 			# all premise chains for the given ast
+			start = time.time()
 			premise_chains = abstract_eval.backward_eval(ast, out_df)
+			prtime("backward_eval", time.time()-start)
 
 			#TODO: figure out how the time limit works
 			# remaining_time_limit = time_limit_sec - (time.time() - start_time) if time_limit_sec is not None else None
@@ -284,9 +351,17 @@ class Synthesizer(object):
 
 
 
-	def enumerative_synthesis(self, inputs, output, max_prog_size, time_limit_sec=None, solution_limit=None, true_output=None, lightweight=False, deduction=True):
+	def enumerative_synthesis(self, inputs, output, max_prog_size, time_limit_sec=None, solution_limit=None, true_output=None, lightweight=False, deduction=True,heuristics=False):
 		
 		prlog("the solution limit is: " + str(solution_limit),pr=True)
+
+		if heuristics == "True":
+			heuristics = True
+		elif heuristics == "False":
+			heuristics = False
+		else:
+			print("wrong heuristic input, should be the string True or the string False")
+			exit(1)
 
 		def encache(cands,k):
 			global candidate_programs_cache
@@ -298,14 +373,23 @@ class Synthesizer(object):
 
 		start_time = time.time()
 
-		all_sketches = self.enum_sketches(inputs, output, size=max_prog_size)
+		# if candidate_sketches_cache is not None:
+		# 	(prevOutput, prevSketches) = candidate_programs_cache
+		# 	if align_table_schema(prevOutput,output, boolean_result=True):
+		# 		all_sketches = prevsketches
+
+		all_sketches = self.enum_sketches(inputs, output, size=max_prog_size, heur=heuristics)
 		candidates = []
 		for level, sketches in all_sketches.items():
 			# for incrementality
 			# if min_prog_size > level:
 			# 	continue
 			for s in sketches:
+				print(s.stmt_string())
+				start = time.time()
 				concrete_programs = self.instantiate_programs_from_sketch(s,inputs,output,deduction=deduction)
+				prtime("instantiate", time.time()-start)
+				start = time.time()
 				for p in concrete_programs:
 					try:
 						t = p.eval(inputs)
@@ -318,9 +402,15 @@ class Synthesizer(object):
 						tb = sys.exc_info()[2]
 						tb_info = ''.join(traceback.format_tb(tb))
 						print(tb_info)
+				prtime("check", time.time()-start)
+
+
+		abstract_programs = fit_progs_into_abstraction(candidates)
+		sketch_nodes = [self.from_list_format(p) for p in abstract_programs]
 
 		prlog("\n\n no sketches left to try ....\n\n")
-		return encache(candidates,max_prog_size+1)
+		encache(sketch_nodes,max_prog_size+1)
+		return candidates
 
 
 	# #todo: these optional args do almost nothing

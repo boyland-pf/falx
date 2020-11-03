@@ -4,6 +4,82 @@ import numpy as np
 
 import pandas as pd
 import networkx as nx
+from os.path import commonprefix
+import time
+import re
+
+# def find_abstraction(s1,s2):
+#     pref = commonprefix([s1,s2])
+#     post = commonprefix([s1[::-1],s2[::-1]])
+#     s1mid = s1[len(pref):len(s1)-len(post)]
+#     s2mid = s2[len(pref):len(s2)-len(post)]
+#     for c in s1mid+s2mid:
+#         if c not in ['(',')',',',' ','1','2','3','4','5','6','7','8','9','0','[',']','+','-']:
+#             return None
+#     return [pref,post]
+
+def to_list_format(s):
+    splitops = s.split(";")[1:]
+    nonewvar = [ss.split("<-")[1].strip() for ss in splitops]
+    divideopargs = [(ss.split("(",1)[0],ss.split("(",1)[1]) for ss in nonewvar]
+    splitargs = [(op,re.split(r',\s*(?![^()]*\))', args[:-1])) for (op, args) in divideopargs]
+    argstoset = [(op,[set([v.strip(") (") for v in arg.split(",")]) for arg in args][1:]) for (op, args) in splitargs]
+
+    def cleanup(args):
+        cleanitup = True
+        for arglist in args:
+            for a in arglist:
+                if a != '_?_':
+                    cleanitup = False
+        return cleanitup
+    argstoset = [(op,arglist) for (op,arglist) in argstoset if not cleanup(arglist)]
+    return argstoset
+
+def matches_sketch(p,s,strict=False):
+    if len(p) != len(s):
+        return False
+    z = zip(p,s)
+    for ((opp,argsp),(ops,argss)) in z:
+        if opp != ops:
+            return False
+        if len(argsp) != len(argss):
+            return False
+        if strict:
+            for (mandp,mands) in zip(argsp,argss):
+                for mand in mands:
+                    if mand not in mandp:
+                        return False
+    return True
+
+#prereq: sketches match
+def refine_sketch(p,s):
+    return [(ops, [valss.intersection(valsp) for (valsp,valss) in zip(argsp,argss)]) for ((opp,argsp),(ops,argss)) in zip(p,s)]
+
+def to_sketch(p):
+    sk = to_list_format(p.stmt_string())
+    return sk
+
+def fit_progs_into_abstraction(cands):
+    #each values in sketches is a list of the sketch and a list of tuples of a path to a hole and must-include values of it
+    #each sketch is only present once
+    sketches = []
+    count = 0
+    cands = [to_list_format(p.stmt_string()) for p in cands]
+    for p in cands:
+        for i, s in enumerate(sketches):
+            if matches_sketch(p,s):
+                count += 1
+                sketches[i] = refine_sketch(p,s)
+                break
+        else:
+            sketches.append(p)
+    prlog("We could have avoided looking at " + str(count) + " programs out of " + str(len(cands)),pr=True)
+    for p in sketches:
+        print(p)
+    print("Printed the candidates") 
+    return sketches
+
+
 
 def remove_duplicate_columns(df):
     """Given a pandas table deuplicate column duplicates"""
@@ -28,12 +104,19 @@ def prlog(s,pr=False):
     with open("/Users/peter/Documents/UCSB/falx/falx/output/peterlogs/interfacelog.txt",'a') as f:
         f.write(s)
 
+with open("/Users/peter/Documents/UCSB/falx/falx/output/peterlogs/timinglog.txt",'w') as f:
+    f.write("timing...\n")
+def prtime(tag, duration):
+    with open("/Users/peter/Documents/UCSB/falx/falx/output/peterlogs/timinglog.txt",'a') as f:
+        f.write(tag + ":" + str(duration) + "\n")
+
 def check_table_inclusion(table1, table2, wild_card="??"):
     """check if table1 is included by table2 (projection + subset), 
         this is sound but not complete: 
             if it thinks two tables are not equal, they absolutely inequal, 
         tables are records"""
-    res = align_table_schema(table1, table2)
+    res = align_table_schema(table1, table2,boolean_result=True)
+
     if res is None:
         return False
     if res == False:
@@ -94,6 +177,7 @@ def align_table_schema(table1, table2, check_equivalence=False, boolean_result=F
     Args:
         find_all_alignments: whether to find all alignments or not
     """
+    start = time.time()
 
     with open("petertestinterface.txt", 'a') as f:
         f.write("table1: " + str(table1) + "\n")
@@ -105,6 +189,7 @@ def align_table_schema(table1, table2, check_equivalence=False, boolean_result=F
         return None
 
     if boolean_result and len(table1) == 0:
+        prtime("align", time.time()-start)
         return True
 
     mapping = {}
@@ -149,7 +234,6 @@ def align_table_schema(table1, table2, check_equivalence=False, boolean_result=F
 
     all_choices = list(itertools.product(*mapping_id_lists))
 
-    if boolean_result: return len(all_choices) > 0
 
         # directly return if there is only one choice, !!!should still check it to ensure correctness
     #if len(all_choices) == 1:
@@ -188,6 +272,10 @@ def align_table_schema(table1, table2, check_equivalence=False, boolean_result=F
             if find_all_alignments:
                 all_alignments.append(inst)
             else:
+                if boolean_result: 
+                    prtime("align", time.time()-start)
+                    return True
+                prtime("align", time.time()-start)
                 return inst
 
         # if all([frozen_table1.count(t) <= frozen_table2.count(t) for t in frozen_table1]):
@@ -196,9 +284,16 @@ def align_table_schema(table1, table2, check_equivalence=False, boolean_result=F
         #     else:
         #         return inst
 
+    if boolean_result:
+        prtime("align", time.time()-start)
+        return len(all_alignments) > 0
+
     if find_all_alignments:
+
+        prtime("align", time.time()-start)
         return all_alignments
 
+    prtime("align", time.time()-start)
     return None
 
 

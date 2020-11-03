@@ -3,15 +3,17 @@ import sys
 from io import StringIO 
 import json
 import numpy as np
-from timeit import default_timer as timer
+# from timeit import default_timer as timer
 import subprocess
 import copy
 import random
+import time
+from os.path import commonprefix
 
 
 from falx.symbolic import SymTable
 
-def sample_symbolic_table(symtable, config, strategy="diversity"):
+def sample_symbolic_table(symtable, config, strategy="diversity", wildcard="??"):
     """given a symbolic table, sample a smaller symbolic table that is contained by it
     Args:
         symtable: the input symbolic table

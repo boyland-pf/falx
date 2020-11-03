@@ -56,6 +56,11 @@ def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 		all requirements for child nodes
 	"""
 
+	#TODO: put stuff in wildcard
+	# tempout = out_df.copy()
+	# for i, c in enumerate(tempout.columns):
+	# 	tempout[c] = np.where(tempout[c] == wild_card, df[c] + '_' + df[c],df[c])
+
 	# get coumn names and schema of the out_df
 	cols = out_df.columns
 	schema = extract_table_schema(out_df)
@@ -95,9 +100,13 @@ def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 		for i, c in enumerate(out_df.columns):
 			if schema[i] != "string":
 				continue
-			col_vals = out_df[c].to_list()
+			try:
+				col_vals = out_df[c].to_list()
+			except Exception as e:
+				col_vals = out_df[c].values.tolist()
 
-			if all(["_" in v or wild_card == v for v in col_vals]):
+			print(col_vals)
+			if all(["_" in str(v) or wild_card == v for v in col_vals]):
 				#out_df[[x for x in out_df.columns if x != c]]
 				if not out_df.empty:
 					def incorporate_wild_card(df):
@@ -136,13 +145,18 @@ def backward_eval_one_step(op, out_df, is_outer_most=False, wild_card = "??"):
 			if not all([schema[i] == "string" for i in sep_col_indexes]):
 				continue
 			sep_cols = [cols[i] for i in sep_col_indexes]
-
 			for sep in ["-", "_", " "]:
-				t = Unite(Table(0), sep_col_indexes[0], sep_col_indexes[1], sep).eval([out_df])
-				candidates.append(convert_abstract(t))
+				try:
+					t = Unite(Table(0), sep_col_indexes[0], sep_col_indexes[1], sep).eval([out_df])
+					candidates.append(convert_abstract(t))
+				except:
+					pass
 			for sep in ["-", "_", " "]:
-				t = Unite(Table(0), sep_col_indexes[1], sep_col_indexes[0], sep).eval([out_df])
-				candidates.append(convert_abstract(t))
+				try:
+					t = Unite(Table(0), sep_col_indexes[1], sep_col_indexes[0], sep).eval([out_df])
+					candidates.append(convert_abstract(t))
+				except:
+					pass
 
 		result = candidates
 

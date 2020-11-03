@@ -23,9 +23,11 @@ from falx.logger import get_logger
 
 from pprint import pprint
 
+import time
 
 
-np.random.seed(2019)
+np.random.seed(2021)
+#np.random.seed(2019)
 
 logger = get_logger("interface")
 logger.setLevel('INFO')
@@ -50,6 +52,7 @@ class FalxInterface(object):
         "time_limit_sec": 10,
         "max_prog_size": 2,
         "lightweight": True,
+        "heuristics": True,
 
         "grammar": {
             "operators": ["select", "unite", "filter", "separate", "spread",
@@ -95,6 +98,8 @@ class FalxInterface(object):
 
 
     def prep_synthesis_input(sym_data, config):
+        start = time.time()
+
         sym_data, true_output = eval_utils.convert_sym_data(sym_data, config)
         instantiated = sym_data.instantiate()
 
@@ -105,6 +110,8 @@ class FalxInterface(object):
         prlog("==> table synthesis input:\n",pr=True)
         prlog(str(sym_data.instantiate())+"\n\n",pr=True)
         prlog(str(instantiated) + "\n")
+
+        prlog("TIME SPENT SAMPLING: " + str(time.time()-start),pr=True)
 
         return [instantiated, true_output]
 
@@ -142,6 +149,8 @@ class FalxInterface(object):
         # apply inverse semantics to obtain symbolic output table and vis programs
         abstract_designs = None
 
+        print("example_trace")
+        print(example_trace)
         if config["vis_backend"] == "vegalite":
             abstract_designs = VisDesign.inv_eval(example_trace)
         else:
@@ -176,14 +185,17 @@ class FalxInterface(object):
 
                 prep_input = FalxInterface.prep_synthesis_input(sym_data, prep_config)
 
+                start = time.time()
                 candidate_progs = synthf(
                                     inputs,prep_input[0],
                                     max_prog_size=config["max_prog_size"],
                                     time_limit_sec=config["time_limit_sec"],
                                     solution_limit=config["solution_limit"],
                                     lightweight=config["lightweight"],
-                                    true_output=prep_input[1]
+                                    true_output=prep_input[1],
+                                    heuristics=config["heuristics"]
                                     )
+                prlog("TIME ON SYNTH: " + str(time.time()-start),pr=True)
 
                 print("There are " + str(len(candidate_progs)) + " programs")
                 for p in candidate_progs:
@@ -219,6 +231,7 @@ class FalxInterface(object):
                             max_prog_size=config["max_prog_size"],
                             time_limit_sec=config["time_limit_sec"],
                             solution_limit=config["solution_limit"],
+                            heuristics=config["heuristics"],
                             true_output=prep_input[1]))
 
                 # if num_samples != None:
